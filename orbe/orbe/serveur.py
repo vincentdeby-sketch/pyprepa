@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 import shutil
 import threading
 import time
@@ -25,7 +26,18 @@ TELEV.mkdir(parents=True, exist_ok=True)
 EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 STATIC = Path(__file__).parent / "static"
 
-app = FastAPI(title="Orbe Local")
+@asynccontextmanager
+async def demarrage(_app):
+    # Le modèle se charge dès le lancement, sans attendre l'ouverture de la page.
+    if os.environ.get("ORBE_CHARGER_AU_DEMARRAGE", "1") == "1":
+        try:
+            charger()
+        except HTTPException:
+            pass
+    yield
+
+
+app = FastAPI(title="Orbe Local", lifespan=demarrage)
 moteur = Moteur()
 
 # ---------- tâches longues (une à la fois) ----------
