@@ -29,7 +29,14 @@ STATIC = Path(__file__).parent / "static"
 @asynccontextmanager
 async def demarrage(_app):
     # Le modèle se charge dès le lancement, sans attendre l'ouverture de la page.
+    from .config import PORT
+    url = f"http://127.0.0.1:{PORT}"
+    print(f"Orbe est prêt : {url}  (Ctrl+C pour arrêter)")
+    if os.environ.get("ORBE_OUVRIR_NAVIGATEUR") == "1":
+        import webbrowser
+        threading.Timer(0.5, lambda: webbrowser.open(url)).start()
     if os.environ.get("ORBE_CHARGER_AU_DEMARRAGE", "1") == "1":
+        print("Chargement du modèle (premier lancement : téléchargement d'environ 1,7 Go)…")
         try:
             charger()
         except HTTPException:
