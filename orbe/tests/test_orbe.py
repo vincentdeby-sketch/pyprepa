@@ -99,7 +99,7 @@ def test_circuit_complet(tmp_path):
     # 2. Analyse sans Claude d'une photo très proche d'un exemple
     r = c.post("/api/analyser", files={"photo": ("x.jpg", (dossier / "p3.jpg").read_bytes(), "image/jpeg")},
                data={"avec_claude": "false"}).json()
-    assert r["final"]["par"] == "local" and r["local"]["candidats"]
+    assert r["final"]["par"] == "rue" and r["local"]["candidats"]  # photo identique à un exemple
     assert r["local"]["poids_exemples"] > 0.5  # même image : les exemples dominent
     vrai = geo.gps_exif(dossier / "p3.jpg")
     assert geo.distance_km(*vrai, r["final"]["lat"], r["final"]["lon"]) < 10
@@ -165,66 +165,123 @@ def test_normaliser_claude():
     assert _extraire_json('Voici : {"a": 1} fin')["a"] == 1
 
 
-def test_banque_panoramax(tmp_path, monkeypatch):
-    """Panoramax simulé comme le vrai : chaque recherche renvoie des photos consécutives
-    d'une même séquence (une rue), au format de l'API (features, geometry, assets.sd.href)."""
+def _faux_reseau(monkeypatch, vides=0.3, couleur=(50, 90, 130)):
+    """Panoramax et Mapillary simulés comme les vrais : chaque recherche renvoie des photos
+    consécutives d'une même rue, au format de chaque API."""
     import json as _json
     from urllib.parse import unquote
-    from fastapi.testclient import TestClient
-    from orbe import panoramax
-    from orbe.geo import distance_km
+    from orbe import banque
 
-    pano = io.BytesIO(); Image.new("RGB", (400, 200), (50, 90, 130)).save(pano, "JPEG")
+    pano = io.BytesIO(); Image.new("RGB", (400, 200), couleur).save(pano, "JPEG")
 
-    def faux_get(url, timeout=30):
-        if "/search?" in url:
-            q = dict(x.split("=") for x in url.split("?")[1].split("&"))
-            o, s_, e, n = (float(v) for v in unquote(q["bbox"]).split(","))
-            r = np.random.default_rng(abs(hash((round(o, 5), round(s_, 5)))) % 2**32)
-            if r.random() < 0.3:          # 30 % des carrés sans aucune image
-                return b'{"type":"FeatureCollection","features":[]}'
-            lat0 = s_ + r.random() * (n - s_)  # une rue horizontale qui traverse le carré
-            feats = [{"id": f"{o:.5f}-{s_:.5f}-{k}", "geometry": {"type": "Point", "coordinates": [o + (e - o) * (k + 0.5) / int(q["limit"]), lat0]},
-                      "properties": {"license": "CC-BY-SA-4.0", "providers": [{"name": "Contributeur"}]},
-                      "assets": {"sd": {"href": "https://exemple/sd.jpg"}}} for k in range(int(q["limit"]))]
-            return _json.dumps({"type": "FeatureCollection", "features": feats}).encode()
-        return pano.getvalue()
+    def faux_get(url, timeout=30, entetes=None):
+        if "?" not in url:
+            return pano.getvalue()
+        q = dict(x.split("=", 1) for x in url.split("?")[1].split("&"))
+        o, s_, e, n = (float(v) for v in unquote(q["bbox"]).split(","))
+        r = np.random.default_rng(abs(hash((round(o, 5), round(s_, 5), "graph.mapillary" in url))) % 2**32)
+        k_max = int(q["limit"])
+        if r.random() < vides:
+            pts = []
+        else:
+            lat0 = s_ + r.random() * (n - s_)
+            pts = [(o + (e - o) * (k + 0.5) / k_max, lat0) for k in range(k_max)]
+        if "graph.mapillary" in url:
+            assert entetes and entetes["Authorization"].startswith("OAuth ")
+            assert (e - o) * (n - s_) <= 0.001 + 1e-9, "rectangle Mapillary trop grand"
+            return _json.dumps({"data": [{"id": f"m{o:.5f}{s_:.5f}{i}", "computed_geometry": {"type": "Point", "coordinates": [x, y]},
+                                          "thumb_1024_url": "https://exemple/m.jpg"} for i, (x, y) in enumerate(pts)]}).encode()
+        return _json.dumps({"type": "FeatureCollection", "features": [
+            {"id": f"p{o:.5f}{s_:.5f}{i}", "geometry": {"type": "Point", "coordinates": [x, y]},
+             "properties": {"license": "CC-BY-SA-4.0", "providers": [{"name": "Contributeur"}]},
+             "assets": {"thumb": {"href": "https://exemple/t.jpg"}, "sd": {"href": "https://exemple/sd.jpg"}}} for i, (x, y) in enumerate(pts)]}).encode()
 
-    monkeypatch.setattr(panoramax, "_get", faux_get)
-    monkeypatch.setattr(panoramax.time, "sleep", lambda s: None)
-    serveur.moteur = Moteur(FauxBackend)
-    c = TestClient(serveur.app)
+    monkeypatch.setattr(banque, "_get", faux_get)
+    return banque
+
+
+def _attendre(c):
     import time
     while c.get("/api/tache").json()["en_cours"]:
         time.sleep(.05)
+    return c.get("/api/tache").json()
+
+
+def test_apprendre_une_zone(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from orbe.geo import distance_km
+    banque = _faux_reseau(monkeypatch)
+    serveur.moteur = Moteur(FauxBackend)
+    c = TestClient(serveur.app)
+    _attendre(c)
     avant = c.get("/api/etat").json()["n_exemples"]
     assert {z["cle"] for z in c.get("/api/banque/zones").json()} >= {"boulogne", "paris16"}
-    assert c.post("/api/banque", json={"zones": ["inconnue"]}).status_code == 400
-    assert c.post("/api/banque", json={"zones": ["boulogne"], "par_zone": 120}).status_code == 200
-    while c.get("/api/tache").json()["en_cours"]:
-        time.sleep(.05)
-    t = c.get("/api/tache").json()
+    assert c.post("/api/banque", json={}).status_code == 400
+    # Sans clé, Mapillary seul est refusé avec un message clair
+    assert c.post("/api/banque", json={"zone": "boulogne", "source": "mapillary"}).status_code == 400
+
+    # 1. Une zone quelconque (Lyon, vue de la carte) : images réparties partout
+    lyon = [4.80, 45.74, 4.87, 45.78]
+    assert c.post("/api/banque", json={"bbox": lyon, "nom": "Lyon", "nombre": 120}).status_code == 200
+    t = _attendre(c)
     assert t["erreur"] is None, t
     r = t["resultat"]
-    assert r["zones"]["Boulogne-Billancourt"] == 120 == r["ajoutees"], r
+    assert r["zone"] == "Lyon" and r["ajoutees"] == 120 and r["par_source"]["panoramax"] == 120, r
     ex = [e for e in c.get("/api/exemples").json() if e["source"] == "panoramax"]
-    assert len(ex) == 120 and c.get("/api/etat").json()["n_exemples"] == avant + 120
-    o, s_, e, n = panoramax.ZONES["boulogne"][1]
+    o, s_, e, n = lyon
     assert all(s_ <= x["lat"] <= n and o <= x["lon"] <= e for x in ex)
-    # Couverture : sur une grille de 6 x 6 (~500 m), presque tous les carrés ont au moins une image
     occupes = {(int((x["lon"] - o) / (e - o) * 6), int((x["lat"] - s_) / (n - s_) * 6)) for x in ex}
-    assert len(occupes) >= 32, f"images regroupées : {len(occupes)}/36 carrés couverts"
-    # la vue 360° (2:1) a été recadrée en vue avant 4:3
-    from orbe.config import PHOTOS
-    with Image.open(PHOTOS / ex[0]["fichier"]) as im:
-        assert abs(im.size[0] / im.size[1] - 4 / 3) < 0.02
+    assert len(occupes) >= 32, f"images regroupées : {len(occupes)}/36"
     pts = [(x["lat"], x["lon"]) for x in ex]
     assert min(distance_km(*a, *b) for i, a in enumerate(pts) for b in pts[i + 1:]) * 1000 >= 25
-    assert r["carres_vides"] > 0
-    # relancer ajoute d'autres images, jamais les mêmes
-    c.post("/api/banque", json={"zones": ["boulogne"], "par_zone": 10})
-    while c.get("/api/tache").json()["en_cours"]:
-        time.sleep(.05)
-    assert c.get("/api/tache").json()["resultat"]["ajoutees"] == 10
-    notes = [e["note"] for e in c.get("/api/exemples").json() if e["source"] == "panoramax"]
-    assert len(notes) == len(set(notes)) == 130
+    from orbe.config import PHOTOS
+    with Image.open(PHOTOS / ex[0]["fichier"]) as im:   # vue 360° recadrée en 4:3
+        assert abs(im.size[0] / im.size[1] - 4 / 3) < 0.02
+
+    # 2. Un pays entier : les carrés s'agrandissent, le nombre d'images reste celui demandé
+    assert len(banque._cases((-5.0, 42.0, 8.0, 51.0), 300)) <= 600
+    # 3. Avec une clé Mapillary : complète les secteurs vides de Panoramax, rectangles < 0,001 °²
+    assert c.post("/api/reglages/mapillary", json={"cle": "MLY|test"}).json() == {"mapillary": True}
+    assert c.post("/api/banque", json={"bbox": [2.30, 48.86, 2.36, 48.88], "nom": "Paris", "nombre": 80}).status_code == 200
+    r = _attendre(c)["resultat"]
+    assert r["ajoutees"] == 80 and r["par_source"].get("mapillary", 0) > 0, r
+    c.post("/api/reglages/mapillary", json={"cle": ""})
+    assert c.get("/api/etat").json()["mapillary"] is False
+    notes = [e["note"] for e in c.get("/api/exemples").json() if e["source"] in ("panoramax", "mapillary")]
+    assert len(notes) == len(set(notes)) == 200
+    assert c.get("/api/etat").json()["n_exemples"] == avant + 200
+
+
+def test_apprendre_sur_place(tmp_path, monkeypatch):
+    """Après une analyse, Orbe apprend les rues autour de l'estimation et refait l'analyse."""
+    from fastapi.testclient import TestClient
+    _faux_reseau(monkeypatch, vides=0.0, couleur=(210, 40, 160))
+    serveur.moteur = Moteur(FauxBackend)
+    c = TestClient(serveur.app)
+    _attendre(c)
+    # La photo à retrouver : la même vue que celles servies autour de Toulouse
+    buf = io.BytesIO(); Image.new("RGB", (300, 225), (210, 40, 160)).save(buf, "JPEG")
+    a = c.post("/api/analyser", files={"photo": ("rue.jpg", buf.getvalue(), "image/jpeg")}, data={"avec_claude": "false"}).json()
+    assert c.post("/api/analyses/inconnue/affiner", json={"lat": 45.0, "lon": 5.0}).status_code == 404
+    assert c.post(f"/api/analyses/{a['id']}/affiner", json={"lat": 43.6, "lon": 1.44, "rayon_km": 1, "nombre": 30}).status_code == 200
+    t = _attendre(c)
+    assert t["erreur"] is None, t
+    r = t["resultat"]
+    assert r["ajoutees"] == 30
+    re_ = r["reanalyse"]
+    assert re_["id"] == a["id"] and re_["affinee"]["ajoutees"] == 30
+    # La vue de rue identique emporte la décision, au bon endroit (Toulouse)
+    assert re_["final"]["par"] == "rue", re_["final"]
+    from orbe.geo import distance_km
+    assert distance_km(re_["final"]["lat"], re_["final"]["lon"], 43.6, 1.44) < 1.5
+
+
+def test_decision():
+    d = serveur.decision
+    loc = {"candidats": [{"lat": 48.84, "lon": 2.24, "rayon_km": 0.2, "proba": 0.6}], "poids_exemples": 0.7}
+    claude_ok = {"lat": 48.841, "lon": 2.241, "confiance": 0.8, "rayon_km": 0.5, "accord_modele": 1}
+    claude_loin = {"lat": 45.76, "lon": 4.83, "confiance": 0.8, "rayon_km": 0.5, "accord_modele": 0}
+    assert d(loc, claude_ok)["par"] == "rue" and d(loc, claude_ok)["accord"] is True
+    assert d(loc, claude_loin)["par"] == "claude"          # désaccord : Claude garde la main
+    assert d(dict(loc, poids_exemples=0.1), claude_ok)["par"] == "claude"
+    assert d(dict(loc, poids_exemples=0.1), None)["par"] == "local"

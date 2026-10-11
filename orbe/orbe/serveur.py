@@ -16,7 +16,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from . import banque as banque_rue
 from . import base, claude
+from .geo import distance_km
 from .config import ATTENTE, DONNEES, PHOTOS
 from .geo import gps_exif
 from .moteur import METRIQUES, Moteur
@@ -81,7 +83,8 @@ def etat():
     m = json.loads(METRIQUES.read_text(encoding="utf-8")) if METRIQUES.exists() else None
     return {"modele_charge": moteur.pret(), "tete": getattr(moteur, "tete_source", "base"),
             "n_exemples": len(base.exemples()), "n_propositions": len(base.propositions()),
-            "claude": claude.mode(), "metriques": m, "tache": tache}
+            "claude": claude.mode(), "metriques": m, "tache": tache,
+            "mapillary": bool(banque_rue.cle_mapillary())}
 
 
 @app.get("/api/tache")
@@ -123,13 +126,30 @@ def analyser(photo: UploadFile = File(...), avec_claude: bool = Form(True)):
         except Exception as e:
             rep["erreur_claude"] = str(e)
     rep["final"] = decision(local, rep["claude"])
+    ANALYSES[ident] = rep
     return rep
 
 
+ANALYSES = {}
+
+
 def decision(local, avis):
-    """Claude a le dernier mot quand il est assez sûr ; sinon on garde le meilleur candidat local."""
+    """Qui a le dernier mot.
+
+    - Une vue de rue connue ressemble fortement à la photo, au même endroit que Claude (ou sans
+      Claude) : on prend ce point précis, c'est l'accord des deux.
+    - Sinon Claude, s'il est assez sûr.
+    - Sinon le meilleur candidat du modèle local.
+    """
     top = local["candidats"][0] if local["candidats"] else None
-    if avis and avis["lat"] is not None and avis["confiance"] >= 0.35:
+    claude_sur = avis and avis["lat"] is not None and avis["confiance"] >= 0.35
+    if top and local.get("poids_exemples", 0) >= 0.5:
+        if not claude_sur or distance_km(top["lat"], top["lon"], avis["lat"], avis["lon"]) <= max(1.0, avis["rayon_km"]):
+            rayon = min(top["rayon_km"], avis["rayon_km"]) if claude_sur else top["rayon_km"]
+            conf = max(top["proba"], avis["confiance"]) if claude_sur else top["proba"]
+            return {"lat": top["lat"], "lon": top["lon"], "rayon_km": rayon, "confiance": conf,
+                    "par": "rue", "accord": bool(claude_sur)}
+    if claude_sur:
         return {"lat": avis["lat"], "lon": avis["lon"], "rayon_km": avis["rayon_km"], "confiance": avis["confiance"],
                 "par": "claude", "accord": avis["accord_modele"] > 0}
     if top:
@@ -231,25 +251,69 @@ def claude_proposer(req: Dossier):
 
 
 class Banque(BaseModel):
-    zones: list[str]
-    par_zone: int = 300
+    bbox: list[float] | None = None   # [ouest, sud, est, nord]
+    zone: str | None = None           # raccourci (boulogne, paris16…)
+    nom: str = "Zone de la carte"
+    nombre: int = 300
+    source: str = "auto"
 
 
 @app.get("/api/banque/zones")
 def zones_banque():
-    from .panoramax import ZONES
-    return [{"cle": k, "nom": v[0], "bbox": v[1]} for k, v in ZONES.items()]
+    return [{"cle": k, "nom": v[0], "bbox": v[1]} for k, v in banque_rue.ZONES.items()]
 
 
 @app.post("/api/banque")
 def banque(req: Banque):
-    """Banque clé en main : images de rue Panoramax avec position GPS, pour les zones choisies."""
-    from . import panoramax
-    zones = [z for z in req.zones if z in panoramax.ZONES]
-    if not zones:
-        raise HTTPException(400, "Choisissez au moins une zone.")
-    n = max(10, min(2000, req.par_zone))
-    return lancer("Banque Panoramax", lambda suivi: panoramax.importer(moteur, zones, n, suivi=suivi))
+    """Apprendre n'importe quelle zone du globe à partir des images de rue."""
+    if req.zone in banque_rue.ZONES:
+        nom, bbox = banque_rue.ZONES[req.zone]
+    elif req.bbox and len(req.bbox) == 4:
+        nom, bbox = req.nom, tuple(req.bbox)
+    else:
+        raise HTTPException(400, "Indiquez une zone.")
+    if not banque_rue.sources_dispo(req.source):
+        raise HTTPException(400, "Mapillary demande une clé gratuite : ajoutez-la dans les réglages de la banque.")
+    return lancer(f"Apprendre : {nom}", lambda suivi: banque_rue.importer(moteur, bbox, nom, req.nombre, req.source, suivi=suivi))
+
+
+class Affiner(BaseModel):
+    lat: float
+    lon: float
+    rayon_km: float = 1.0
+    nombre: int = 60
+
+
+@app.post("/api/analyses/{ident}/affiner")
+def affiner(ident: str, req: Affiner):
+    """Apprendre sur place : images de rue autour de l'estimation, puis nouvelle analyse."""
+    rep = ANALYSES.get(ident)
+    if not rep:
+        raise HTTPException(404, "Analyse introuvable (le serveur a redémarré ?). Relancez l'analyse.")
+    r = max(0.4, min(3.0, req.rayon_km))
+    dlat = r / 111.195
+    dlon = r / (111.195 * max(0.1, np.cos(np.radians(req.lat))))
+    bbox = (req.lon - dlon, req.lat - dlat, req.lon + dlon, req.lat + dlat)
+
+    def travail(suivi):
+        bilan = banque_rue.importer(moteur, bbox, "Autour de la photo", max(10, min(300, req.nombre)), "auto", suivi=suivi)
+        _, carac = _carac_televersement(ident)
+        rep["local"] = moteur.predire(carac)
+        rep["final"] = decision(rep["local"], rep["claude"])
+        rep["affinee"] = bilan
+        return {"reanalyse": rep, "ajoutees": bilan["ajoutees"], "carres_vides": bilan["carres_vides"]}
+
+    return lancer("Apprendre sur place", travail)
+
+
+class CleMapillary(BaseModel):
+    cle: str
+
+
+@app.post("/api/reglages/mapillary")
+def cle_mapillary(req: CleMapillary):
+    banque_rue.enregistrer_cle_mapillary(req.cle)
+    return {"mapillary": bool(banque_rue.cle_mapillary())}
 
 
 @app.get("/api/propositions")

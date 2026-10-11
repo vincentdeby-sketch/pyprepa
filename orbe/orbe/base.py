@@ -18,7 +18,7 @@ import numpy as np
 from .config import ATTENTE, BASE, PHOTOS
 
 SOURCES = {"exif": "GPS de la photo", "correction": "Corrigée sur la carte", "claude_valide": "Proposée par Claude, validée",
-           "panoramax": "Image de rue Panoramax"}
+           "panoramax": "Image de rue Panoramax", "mapillary": "Image de rue Mapillary"}
 
 _verrou = threading.RLock()
 
@@ -61,6 +61,22 @@ def ajouter(chemin_photo: Path, lat: float, lon: float, source: str, carac: np.n
                        "note": note, "empreinte": empreinte, "date": time.time()})
         _ecrire(lignes)
         return lignes[-1]
+
+
+def ajouter_plusieurs(lignes):
+    """lignes = [(chemin, lat, lon, source, carac, note, empreinte)] : une seule écriture de la base."""
+    with _verrou:
+        base_ = _lire()
+        for chemin, lat, lon, source, carac, note, empr in lignes:
+            if source not in SOURCES or not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                continue
+            ident = uuid.uuid4().hex[:12]
+            dest = PHOTOS / f"{ident}.jpg"
+            shutil.copy2(chemin, dest)
+            np.save(PHOTOS / f"{ident}.npy", np.asarray(carac, np.float32))
+            base_.append({"id": ident, "fichier": dest.name, "lat": lat, "lon": lon, "source": source,
+                          "note": note, "empreinte": empr, "date": time.time()})
+        _ecrire(base_)
 
 
 def empreinte(chemin) -> str:

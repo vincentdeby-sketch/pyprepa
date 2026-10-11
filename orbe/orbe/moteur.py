@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import threading
 from pathlib import Path
 
@@ -37,6 +38,7 @@ class GeoCLIPBackend:
         from geoclip.model.image_encoder import _extract_image_features
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        torch.set_num_threads(max(1, os.cpu_count() or 1))
         m = GeoCLIP()
         # Orbe ne lit que des images : la partie « texte » de CLIP (~500 Mo en mémoire) est inutile.
         clip = m.image_encoder.CLIP
@@ -94,6 +96,15 @@ class Moteur:
         self._tete = tete
 
     # ---------- caractéristiques ----------
+    def caracteristiques_images(self, images) -> np.ndarray:
+        """Vecteurs CLIP (n, 2, 768) d'une liste d'images PIL, calculés en un seul lot."""
+        vues = []
+        for im in images:
+            vues += [im, ImageOps.mirror(im)]
+        with self._verrou:
+            f = self.b.clip(vues)
+        return f.numpy().astype(np.float32).reshape(len(images), 2, -1)
+
     def caracteristiques(self, chemin: Path) -> np.ndarray:
         """Vecteurs CLIP (2, 768) : la photo et son miroir (le miroir sert à l'entraînement)."""
         with Image.open(chemin) as im:

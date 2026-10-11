@@ -36,21 +36,29 @@ est activée si un filtre de sécurité refuse une image à tort.
 
 ## Entraîner le modèle
 
-Onglet **Entraîner** :
-0. **Banque clé en main** : cochez vos zones (Boulogne, Issy, Sèvres, Saint-Cloud, Paris 15e, 16e),
-   choisissez le nombre d'images, cliquez « Télécharger la banque ». Orbe récupère des vues de rue
-   [Panoramax](https://panoramax.fr) (IGN + OpenStreetMap France, licence libre) avec leur position GPS,
-   réparties sur toute la zone et espacées d'au moins 25 m. Les vues 360° sont recadrées en vue avant.
-   Comptez environ 2 secondes par image sur un PC sans carte graphique. Puis lancez l'entraînement.
-1. **Importer un dossier** de photos qui contiennent leur position GPS (photos de téléphone,
-   par exemple vos visites à Boulogne). Les photos sans GPS sont ignorées, les doublons aussi.
-2. **Corriger les analyses** : après une analyse, « C'est juste » ou « Corriger sur la carte »
-   ajoute la photo à vos exemples.
-3. **Claude propose, vous validez** : pour un dossier de photos sans GPS, Claude propose des
-   positions. Elles restent en attente tant que vous ne les avez pas validées ou corrigées.
-4. **Entraîner sur mes photos** (10 exemples minimum). Une photo sur cinq est mise de côté
-   pour le test. Orbe compare l'erreur médiane avant et après, et ne garde la nouvelle version
-   que si elle se trompe moins. Le résultat s'affiche en kilomètres.
+**Orbe apprend tout seul, partout sur Terre.** Deux façons :
+
+- **Apprendre sur place** (onglet Analyser, coché par défaut) : après chaque analyse, Orbe
+  télécharge une soixantaine de vues de rue autour de l'estimation, les compare à votre photo et
+  refait l'analyse. Si une vue ressemble fortement à votre photo, Orbe donne ce point précis
+  (« Vue de rue identique trouvée »). Chaque analyse enrichit la carte : plus vous l'utilisez,
+  plus Orbe connaît de rues.
+- **Apprendre une zone** (onglet Entraîner) : cherchez un lieu dans la barre en haut, ou déplacez
+  la carte. La zone apprise est ce que montre l'écran : un quartier, une ville, un pays. Orbe répartit
+  les images sur toute la zone et indique la précision attendue (rue, quartier, ville, région).
+
+Sources des vues de rue, avec position GPS exacte et licence libre :
+- [Panoramax](https://panoramax.fr) (IGN + OpenStreetMap France) : très bonne couverture en France, sans clé ;
+- [Mapillary](https://www.mapillary.com) : couverture mondiale, clé gratuite à coller dans
+  « Clé Mapillary » (compte Mapillary › Developers › Register application › Client Token).
+
+Ensuite, vous pouvez aussi :
+1. **Importer un dossier** de vos photos qui contiennent leur position GPS.
+2. **Corriger les analyses** : « C'est juste » ou « Corriger sur la carte ».
+3. **Claude propose, vous validez** : positions proposées par Claude pour des photos sans GPS.
+4. **Entraîner sur mes photos** (10 exemples minimum). Une photo sur cinq est mise de côté pour le
+   test ; la nouvelle version n'est gardée que si elle se trompe moins. Les vues de rue servent
+   déjà sans entraînement ; l'entraînement améliore surtout la région générale.
 
 Ce qui est réentraîné : la petite couche de GeoCLIP qui relie l'image à une position.
 CLIP lui-même reste figé, c'est ce qui permet d'entraîner sans carte graphique.

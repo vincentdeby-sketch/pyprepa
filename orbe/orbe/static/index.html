@@ -86,6 +86,14 @@ label.case input { width: 18px; height: 18px; accent-color: var(--accent); }
 .mono { font: 500 12px var(--f-mono); color: var(--ink-3); }
 .sep { height: 1px; background: var(--edge); }
 .leaflet-container { background: #0b1220; font: 13px var(--f-body); }
+.recherche { position: fixed; top: 16px; left: 452px; right: 70px; z-index: 500; display: flex; gap: 6px; max-width: 520px; }
+.recherche input { background: var(--panel); backdrop-filter: blur(18px); box-shadow: inset 0 0 0 1px var(--edge), 0 10px 30px -10px #000; border-radius: 999px; padding: 11px 16px; }
+@media (max-width: 760px) { .recherche { left: 12px; right: 60px; } }
+select { font: 14px var(--f-body); color: var(--ink); background: rgb(255 255 255 / .06); border: 0; box-shadow: inset 0 0 0 1px var(--edge); border-radius: 12px; padding: 9px 10px; }
+select option { background: #16202f; }
+.puces { display: flex; flex-wrap: wrap; gap: 6px; }
+.puce { font: 600 12px var(--f-body); color: var(--ink-2); background: rgb(255 255 255 / .06); border: 0; border-radius: 999px; padding: 7px 11px; cursor: pointer; }
+.puce:hover { background: rgb(255 255 255 / .12); color: var(--ink); }
 .coords { position: fixed; right: 12px; bottom: 26px; z-index: 500; font: 500 12px var(--f-mono); padding: 7px 11px; border-radius: 999px; background: var(--panel); color: var(--ink-2); }
 .spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgb(255 255 255 / .25); border-top-color: var(--accent); animation: t .8s linear infinite; display: inline-block; }
 @keyframes t { to { transform: rotate(1turn); } }
@@ -95,6 +103,7 @@ label.case input { width: 18px; height: 18px; accent-color: var(--accent); }
 <body>
 <div id="carte" aria-label="Carte satellite"></div>
 <div class="coords" id="coords">—</div>
+<form class="recherche" id="recherche" role="search"><input type="text" id="lieu" placeholder="Aller à : ville, quartier, adresse, pays…" aria-label="Rechercher un lieu"><button class="btn" type="submit">Aller</button></form>
 
 <aside class="panneau" aria-label="Orbe">
   <div class="tete">
@@ -106,6 +115,7 @@ label.case input { width: 18px; height: 18px; accent-color: var(--accent); }
     </div>
   </div>
   <div class="corps">
+    <div id="tache" hidden class="carte-res"><p class="etiq" id="tache-nom"></p><div class="barre"><i id="tache-barre" style="width:0"></i></div><p class="muted" id="tache-msg"></p></div>
     <!-- ANALYSER -->
     <section class="vue" id="vue-analyser">
       <div id="depot" class="depot">
@@ -117,6 +127,7 @@ label.case input { width: 18px; height: 18px; accent-color: var(--accent); }
         <p class="muted">Ou glissez-la ici, ou collez-la (Ctrl+V).</p>
       </div>
       <label class="case"><input type="checkbox" id="avec-claude" checked> Demander l'avis de Claude <span class="muted" id="claude-mode"></span></label>
+      <label class="case"><input type="checkbox" id="sur-place" checked> Apprendre sur place : images de rue autour de l'estimation <span class="muted">(1 à 3 min)</span></label>
       <button class="btn prim" id="analyser" disabled>Analyser</button>
       <div id="statut" aria-live="polite"></div>
       <div id="resultat" class="vue"></div>
@@ -134,15 +145,27 @@ label.case input { width: 18px; height: 18px; accent-color: var(--accent); }
         <button class="btn prim" id="entrainer">Entraîner sur mes photos</button>
         <p class="muted">Une photo sur cinq est mise de côté pour juger le résultat. La nouvelle version n'est gardée que si elle se trompe moins sur ces photos.</p>
       </div>
-      <div id="tache" hidden class="carte-res"><p class="etiq" id="tache-nom"></p><div class="barre"><i id="tache-barre" style="width:0"></i></div><p class="muted" id="tache-msg"></p></div>
 
       <div class="carte-res">
-        <p class="etiq">Banque clé en main · images de rue</p>
-        <p class="muted">Orbe télécharge des vues de rue Panoramax (le « Street View » public de l'IGN et d'OpenStreetMap France), avec leur position GPS, réparties sur chaque zone choisie.</p>
-        <div id="zones" class="grille" style="grid-template-columns:1fr 1fr"></div>
-        <div class="rang"><input type="number" id="par-zone" value="300" min="10" max="2000" step="50" style="width:100px"><span class="muted">images par zone</span></div>
+        <p class="etiq">Apprendre une zone · partout sur Terre</p>
+        <p class="muted">La zone apprise, c'est ce que montre la carte. Déplacez-la, zoomez, ou cherchez un lieu en haut de l'écran. Orbe télécharge des vues de rue avec leur position GPS, réparties sur toute la zone.</p>
+        <p id="zone-info" style="margin:0;font-weight:600">—</p>
+        <div class="puces" id="raccourcis"></div>
+        <div class="rang">
+          <input type="number" id="nb-zone" value="300" min="10" max="3000" step="50" style="width:100px"><span class="muted">images</span>
+          <select id="source-zone" aria-label="Source des images">
+            <option value="auto">Panoramax puis Mapillary</option>
+            <option value="panoramax">Panoramax (France)</option>
+            <option value="mapillary">Mapillary (monde)</option>
+          </select>
+        </div>
         <p class="muted" id="estimation-banque"></p>
-        <button class="btn prim" id="banque">Télécharger la banque</button>
+        <button class="btn prim" id="banque">Apprendre cette zone</button>
+        <details>
+          <summary class="muted" style="cursor:pointer">Clé Mapillary (gratuite, pour le reste du monde) <span id="etat-mapillary"></span></summary>
+          <p class="muted">Créez un compte sur mapillary.com, puis « Developers » › « Register application » : copiez le « Client Token » (commence par MLY|) et collez-le ici.</p>
+          <div class="rang"><input type="text" id="cle-mapillary" placeholder="MLY|…"><button class="btn petit" id="enreg-mapillary">Enregistrer</button></div>
+        </details>
       </div>
 
       <div class="carte-res">
@@ -237,6 +260,7 @@ label.case input { width: 18px; height: 18px; accent-color: var(--accent); }
         (d ? ` Dernier essai : ${km(d.mediane_km_avant)} → ${km(d.mediane_km_apres)}, rejeté.` : "");
     }
     $("analyser").disabled = !photo || !etat.modele_charge || occupe;
+    $("etat-mapillary").textContent = etat.mapillary ? "✓ enregistrée" : "";
     suivreTache(etat.tache);
   }
   let finTache = null;
@@ -252,13 +276,16 @@ label.case input { width: 18px; height: 18px; accent-color: var(--accent); }
     if (!t.en_cours && finTache !== t.nom + (t.erreur || "") + JSON.stringify(t.resultat)) {
       finTache = t.nom + (t.erreur || "") + JSON.stringify(t.resultat);
       afficherPropositions();
+      if (t.resultat?.reanalyse && derniere && t.resultat.reanalyse.id === derniere.id) { derniere = t.resultat.reanalyse; montrer(derniere, true); }
     }
   }
   function resume(nom, r) {
-    if ("zones" in r) return `${r.ajoutees} images de rue ajoutées (${Object.entries(r.zones).map(([k, v]) => `${k} : ${v}`).join(", ")})` +
+    if ("reanalyse" in r) return `${r.ajoutees} vues de rue apprises autour de la photo, estimation mise à jour.` +
+      (r.ajoutees === 0 ? " Aucune image de rue disponible ici : ajoutez une clé Mapillary pour couvrir plus de lieux." : "");
+    if ("zone" in r) return `${r.zone} : ${r.ajoutees} vues de rue apprises (${Object.entries(r.par_source).map(([k, v]) => `${k} ${v}`).join(", ")})` +
       `${r.erreurs ? `, ${r.erreurs} échecs de téléchargement` : ""}.` +
-      (r.carres_vides ? ` ${r.carres_vides} carrés de 150 m n'ont aucune image sur Panoramax : ces rues ne pourront pas être apprises par la banque.` : "") +
-      " Lancez maintenant l'entraînement.";
+      (r.carres_vides ? ` ${r.carres_vides} secteurs sur ${r.carres} sans aucune image disponible.` : "") +
+      " Elles servent tout de suite aux analyses.";
     if ("ajoutees" in r) return `${r.vues} photos vues : ${r.ajoutees} ajoutées, ${r.sans_gps} sans GPS, ${r.doublons} déjà présentes${r.erreurs ? `, ${r.erreurs} illisibles` : ""}.`;
     if ("proposees" in r) return `${r.analysees} photos analysées : ${r.proposees} propositions à valider, ${r.ecartees} trop incertaines.`;
     if ("garde" in r) return `Erreur médiane ${km(r.mediane_km_avant)} → ${km(r.mediane_km_apres)} sur ${r.n_test} photos de test. ` +
@@ -310,7 +337,7 @@ label.case input { width: 18px; height: 18px; accent-color: var(--accent); }
     } catch { return ""; }
   }
 
-  function montrer(a) {
+  function montrer(a, apresAffinage) {
     vider();
     const f = a.final, c = a.claude, loc = a.local;
     loc.candidats.forEach((k, i) => rond(k.lat, k.lon, k.rayon_km, "#ffc93c", true));
@@ -325,7 +352,8 @@ label.case input { width: 18px; height: 18px; accent-color: var(--accent); }
     cadrer(f.lat, f.lon, f.rayon_km);
     const titre = c?.lieu || "Position estimée";
     const sous = c ? [c.ville, c.pays].filter(Boolean).join(", ") : "";
-    const accord = f.par === "claude" ? (f.accord ? `<span class="badge ok">Claude confirme le modèle</span>` : `<span class="badge warn">Claude corrige le modèle</span>`)
+    const accord = f.par === "rue" ? `<span class="badge ok">Vue de rue identique trouvée${f.accord ? " · Claude d'accord" : ""}</span>`
+      : f.par === "claude" ? (f.accord ? `<span class="badge ok">Claude confirme le modèle</span>` : `<span class="badge warn">Claude corrige le modèle</span>`)
       : c && c.lat == null ? `<span class="badge warn">Claude ne voit pas de lieu identifiable</span>`
       : c ? `<span class="badge warn">Claude n'est pas sûr</span>` : `<span class="badge local">Modèle local seul</span>`;
     $("resultat").innerHTML = `
@@ -355,6 +383,8 @@ label.case input { width: 18px; height: 18px; accent-color: var(--accent); }
           <button class="btn" id="corriger">Corriger sur la carte</button>
         </div>
         <div id="apprendre"></div>
+        <button class="btn" id="affiner">${a.affinee ? "Apprendre encore plus de rues autour" : "Affiner au niveau de la rue"}</button>
+        ${a.affinee ? `<p class="muted">${a.affinee.ajoutees} vues de rue apprises autour de cette photo.</p>` : ""}
       </div>
       <div class="carte-res">
         <p class="etiq">Ce que propose le modèle local (${esc(loc.tete)}, ${loc.n_exemples} exemples)</p>
@@ -365,7 +395,17 @@ label.case input { width: 18px; height: 18px; accent-color: var(--accent); }
     $("copier").onclick = (e) => navigator.clipboard.writeText(`${f.lat.toFixed(6)}, ${f.lon.toFixed(6)}`).then(() => e.target.textContent = "Copié");
     document.querySelectorAll(".cand").forEach((b) => b.onclick = () => { const k = loc.candidats[b.dataset.i]; cadrer(k.lat, k.lon, k.rayon_km); });
     $("juste").onclick = () => enregistrer(a.id, f.lat, f.lon);
+    $("affiner").onclick = () => affinerSurPlace(a);
+    if (!apresAffinage && !a.affinee && $("sur-place").checked && f.rayon_km <= 50) affinerSurPlace(a);
     $("corriger").onclick = () => commencerCorrection("analyse", a.id, f.lat, f.lon, "apprendre");
+  }
+
+  function affinerSurPlace(a) {
+    const f = a.final;
+    if (!f) return;
+    api(`/api/analyses/${a.id}/affiner`, json({ lat: f.lat, lon: f.lon, rayon_km: Math.min(3, Math.max(0.5, f.rayon_km)), nombre: 60 }))
+      .then(() => { $("affiner").disabled = true; $("affiner").textContent = "Apprentissage des rues autour… (suivi dans l'onglet Entraîner)"; rafraichir(); })
+      .catch((e) => alert(e.message));
   }
 
   function dist(a, b, c, d) {
@@ -408,20 +448,68 @@ label.case input { width: 18px; height: 18px; accent-color: var(--accent); }
   $("proposer").onclick = () => api("/api/claude-proposer", json({ dossier: $("dossier-claude").value, maximum: Number($("max-claude").value) || 10 }))
     .then(rafraichir).catch((e) => alert(e.message));
 
-  // ---------- banque Panoramax ----------
+  // ---------- apprendre une zone (la vue de la carte) ----------
+  let nomZone = "Zone de la carte", raccourci = null;
+  function bboxVue() {
+    const b = carte.getBounds();
+    return [Math.max(-180, b.getWest()), Math.max(-85, b.getSouth()), Math.min(180, b.getEast()), Math.min(85, b.getNorth())];
+  }
+  function surface([o, s_, e, n]) { return Math.abs(e - o) * 111.2 * Math.cos((s_ + n) / 2 * Math.PI / 180) * Math.abs(n - s_) * 111.2; }
+  function majZone() {
+    const km2 = surface(bboxVue());
+    const taille = km2 < 1 ? `${Math.round(km2 * 100) / 100} km²` : km2 < 10000 ? `${Math.round(km2).toLocaleString("fr-FR")} km²` : `${Math.round(km2 / 1000).toLocaleString("fr-FR")} 000 km²`;
+    $("zone-info").textContent = `${nomZone} · ${taille}`;
+    const n = Number($("nb-zone").value) || 0;
+    const parKm2 = n / km2;
+    $("estimation-banque").textContent = `${n} vues de rue · environ ${Math.max(1, Math.round(n * 1.2 / 60))} min · ` +
+      (parKm2 >= 20 ? "précision à la rue près" : parKm2 >= 2 ? "précision au quartier" : parKm2 >= 0.05 ? "précision à la ville" : "précision à la région : zoomez pour plus de détail");
+  }
+  let minuteurZone;
+  carte.on("moveend", () => {
+    majZone();
+    clearTimeout(minuteurZone);
+    minuteurZone = setTimeout(async () => {
+      if (raccourci) { raccourci = null; return; }
+      const c = carte.getCenter(), z = carte.getZoom();
+      try {
+        const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=fr&zoom=${z >= 13 ? 14 : z >= 9 ? 10 : z >= 6 ? 5 : 3}&lat=${c.lat}&lon=${c.lng}`);
+        const d = await r.json();
+        const a = d.address || {};
+        nomZone = a.suburb || a.city || a.town || a.village || a.county || a.state || a.country || d.name || "Zone de la carte";
+      } catch { nomZone = "Zone de la carte"; }
+      majZone();
+    }, 700);
+  });
+  $("nb-zone").oninput = majZone;
   (async () => {
     const zones = await api("/api/banque/zones").catch(() => []);
-    $("zones").innerHTML = zones.map((z, i) => `<label class="case"><input type="checkbox" value="${z.cle}" ${i === 0 ? "checked" : ""}> ${esc(z.nom)}</label>`).join("");
-    const estimer = () => {
-      const n = document.querySelectorAll("#zones input:checked").length * (Number($("par-zone").value) || 0);
-      $("estimation-banque").textContent = n ? `${n} images · environ ${Math.max(1, Math.round(n * 2 / 60))} min sur un PC sans carte graphique · ${Math.round(n * 0.25)} Mo` : "";
-    };
-    $("zones").onchange = estimer; $("par-zone").oninput = estimer; estimer();
-    $("banque").onclick = () => {
-      const choix = [...document.querySelectorAll("#zones input:checked")].map((x) => x.value);
-      api("/api/banque", json({ zones: choix, par_zone: Number($("par-zone").value) || 300 })).then(rafraichir).catch((e) => alert(e.message));
-    };
+    $("raccourcis").innerHTML = zones.map((z) => `<button class="puce" data-z="${z.cle}">${esc(z.nom)}</button>`).join("");
+    $("raccourcis").querySelectorAll("[data-z]").forEach((b) => b.onclick = () => {
+      const z = zones.find((x) => x.cle === b.dataset.z);
+      raccourci = z.cle; nomZone = z.nom;
+      carte.flyToBounds([[z.bbox[1], z.bbox[0]], [z.bbox[3], z.bbox[2]]], { duration: 1 });
+    });
   })();
+  $("banque").onclick = () => api("/api/banque", json({ bbox: bboxVue(), nom: nomZone, nombre: Number($("nb-zone").value) || 300, source: $("source-zone").value }))
+    .then(rafraichir).catch((e) => alert(e.message));
+  $("enreg-mapillary").onclick = () => api("/api/reglages/mapillary", json({ cle: $("cle-mapillary").value }))
+    .then((r) => { $("cle-mapillary").value = ""; $("etat-mapillary").textContent = r.mapillary ? "✓ enregistrée" : ""; }).catch((e) => alert(e.message));
+  majZone();
+
+  // Recherche d'un lieu (barre en haut de la carte)
+  $("recherche").onsubmit = async (e) => {
+    e.preventDefault();
+    const q = $("lieu").value.trim();
+    if (!q) return;
+    try {
+      const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=fr&q=${encodeURIComponent(q)}`);
+      const [d] = await r.json();
+      if (!d) { alert("Lieu introuvable."); return; }
+      const [s_, n, o, e2] = d.boundingbox.map(Number);
+      raccourci = "recherche"; nomZone = d.name || q;
+      carte.flyToBounds([[s_, o], [n, e2]], { duration: 1.2, maxZoom: 17 });
+    } catch { alert("Recherche impossible : vérifiez la connexion internet."); }
+  };
 
   async function afficherPropositions() {
     let p = [];
@@ -453,7 +541,7 @@ label.case input { width: 18px; height: 18px; accent-color: var(--accent); }
   }
 
   // ---------- exemples ----------
-  const SOURCES = { exif: "GPS", correction: "Corrigée", claude_valide: "Claude ✓", panoramax: "Rue" };
+  const SOURCES = { exif: "GPS", correction: "Corrigée", claude_valide: "Claude ✓", panoramax: "Panoramax", mapillary: "Mapillary" };
   async function afficherExemples() {
     const ex = await api("/api/exemples").catch(() => []);
     $("exemples-info").textContent = ex.length ? `${ex.length} photos dont la position est sûre. Cliquez pour les voir sur la carte.` : "Aucun exemple pour l'instant. Importez un dossier ou validez des analyses.";
