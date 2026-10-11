@@ -37,7 +37,13 @@ class GeoCLIPBackend:
         from geoclip.model.image_encoder import _extract_image_features
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.m = GeoCLIP().to(self.device).eval()
+        m = GeoCLIP()
+        # Orbe ne lit que des images : la partie « texte » de CLIP (~500 Mo en mémoire) est inutile.
+        clip = m.image_encoder.CLIP
+        for nom in ("text_model", "text_projection"):
+            if hasattr(clip, nom):
+                delattr(clip, nom)
+        self.m = m.to(self.device).eval()
         self._extract = _extract_image_features
         self.tete_base = self.m.image_encoder.mlp
         self.loc = self.m.location_encoder
@@ -99,8 +105,8 @@ class Moteur:
     @torch.no_grad()
     def embed_lieux(self, coords: torch.Tensor) -> torch.Tensor:
         out = []
-        for i in range(0, len(coords), 8192):
-            out.append(F.normalize(self.b.loc(coords[i:i + 8192].to(self.b.device)).float().cpu(), dim=1))
+        for i in range(0, len(coords), 4096):
+            out.append(F.normalize(self.b.loc(coords[i:i + 4096].to(self.b.device)).float().cpu(), dim=1))
         return torch.cat(out) if out else torch.zeros((0, 512))
 
     def _galerie_base(self):

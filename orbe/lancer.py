@@ -1,4 +1,12 @@
 """Démarre Orbe Local et ouvre le navigateur."""
+import os
+
+# Téléchargement classique du modèle : l'outil rapide de HuggingFace (Xet) réserve
+# beaucoup de mémoire d'un coup et plante sur les PC qui en ont peu.
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
+os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "60")
+
 import threading
 import webbrowser
 
