@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orbe Local</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='none' stroke='%233fb4ff' stroke-width='4'/><circle cx='16' cy='16' r='5' fill='%233fb4ff'/></svg>">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+:root {
+  --bg: #0b1220; --panel: rgb(16 24 40 / .86); --ink: #eef3fa; --ink-2: #b9c5d6; --ink-3: #8a98ad;
+  --accent: #3fb4ff; --accent-soft: rgb(63 180 255 / .16); --local: #ffc93c; --ok: #3ddc84; --warn: #f0b13c; --bad: #ff7272;
+  --edge: rgb(255 255 255 / .1); --r: 18px;
+  --f-display: "Unbounded", system-ui, sans-serif; --f-body: "Figtree", system-ui, sans-serif; --f-mono: "JetBrains Mono", Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 15px/1.5 var(--f-body); }
+#carte { position: fixed; inset: 0; }
+.panneau {
+  position: fixed; top: 16px; left: 16px; bottom: 16px; width: min(420px, calc(100vw - 32px)); z-index: 500;
+  background: var(--panel); backdrop-filter: blur(18px) saturate(160%); -webkit-backdrop-filter: blur(18px) saturate(160%);
+  border-radius: var(--r); box-shadow: inset 0 0 0 1px var(--edge), 0 20px 60px -20px #000;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+@media (max-width: 760px) { .panneau { top: auto; height: 58vh; left: 8px; right: 8px; bottom: 8px; width: auto; } }
+.tete { padding: 16px 18px 0; }
+.marque { display: flex; align-items: center; gap: 10px; }
+.marque i { width: 22px; height: 22px; border-radius: 50%; border: 2.5px solid var(--accent); display: grid; place-items: center; }
+.marque i::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.marque b { font: 700 16px/1 var(--f-display); letter-spacing: .03em; }
+.marque span { margin-left: auto; font-size: 12px; color: var(--ink-3); text-align: right; }
+.onglets { display: flex; gap: 4px; margin-top: 14px; padding: 4px; background: rgb(255 255 255 / .05); border-radius: 14px; }
+.onglets button { flex: 1; font: 600 13px var(--f-body); color: var(--ink-2); background: none; border: 0; padding: 9px 4px; border-radius: 10px; cursor: pointer; }
+.onglets button[aria-selected="true"] { background: rgb(255 255 255 / .1); color: var(--ink); }
+.corps { flex: 1; overflow: auto; padding: 16px 18px 20px; display: grid; gap: 14px; align-content: start; }
+.vue[hidden] { display: none !important; }
+.vue { display: grid; gap: 14px; }
+h2 { font: 500 19px/1.2 var(--f-display); margin: 0; overflow-wrap: anywhere; }
+.etiq { font: 700 11px/1 var(--f-body); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 6px; }
+.muted { color: var(--ink-3); font-size: 13px; margin: 0; }
+.depot { border: 1.5px dashed rgb(63 180 255 / .5); border-radius: 16px; padding: 14px; text-align: center; display: grid; gap: 10px; }
+.depot.survol { background: var(--accent-soft); }
+.depot img { max-height: 160px; max-width: 100%; border-radius: 12px; justify-self: center; }
+.btn { font: 600 14px/1 var(--f-body); color: var(--ink); min-height: 42px; padding: 0 16px; border: 0; border-radius: 999px; cursor: pointer;
+  background: rgb(255 255 255 / .08); box-shadow: inset 0 0 0 1px var(--edge); display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.btn:hover { background: rgb(255 255 255 / .14); }
+.btn:disabled { opacity: .4; cursor: default; }
+.btn.prim { background: linear-gradient(180deg, #6cc8ff, var(--accent)); color: #04121f; box-shadow: none; }
+.btn.ok { background: rgb(61 220 132 / .18); color: var(--ok); }
+.btn.petit { min-height: 34px; padding: 0 12px; font-size: 13px; }
+.rang { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.rang > .btn.prim { flex: 1; }
+input[type=text], input[type=number] { font: 14px var(--f-body); color: var(--ink); background: rgb(255 255 255 / .06); border: 0; box-shadow: inset 0 0 0 1px var(--edge);
+  border-radius: 12px; padding: 10px 12px; width: 100%; }
+label.case { display: flex; gap: 10px; align-items: center; font-size: 14px; color: var(--ink-2); cursor: pointer; }
+label.case input { width: 18px; height: 18px; accent-color: var(--accent); }
+.carte-res { padding: 14px; border-radius: 16px; background: rgb(255 255 255 / .05); box-shadow: inset 0 0 0 1px var(--edge); display: grid; gap: 10px; }
+.chiffres { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.chiffres div { padding: 10px 12px; border-radius: 12px; background: rgb(255 255 255 / .05); }
+.chiffres b { display: block; font: 600 20px/1.1 var(--f-display); margin-top: 4px; font-variant-numeric: tabular-nums; }
+.badge { font: 700 10px/1 var(--f-body); letter-spacing: .06em; text-transform: uppercase; padding: 4px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+.badge.local { background: rgb(255 201 60 / .16); color: var(--local); }
+.badge.ok { background: rgb(61 220 132 / .16); color: var(--ok); }
+.badge.warn { background: rgb(240 177 60 / .16); color: var(--warn); }
+.liste { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 14px; }
+.liste li { display: flex; gap: 8px; align-items: baseline; }
+.liste li span:first-child { color: var(--accent); }
+.avis { padding: 12px 14px; border-radius: 14px; font-size: 14px; }
+.avis.info { background: var(--accent-soft); } .avis.bad { background: rgb(255 114 114 / .14); } .avis.warn { background: rgb(240 177 60 / .14); }
+.avis strong { display: block; margin-bottom: 2px; }
+.cand { display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; align-items: center; padding: 8px 10px; border-radius: 12px; background: rgb(255 255 255 / .04); cursor: pointer; border: 0; color: inherit; font: inherit; text-align: left; width: 100%; }
+.cand:hover { background: rgb(255 255 255 / .09); }
+.cand i { width: 18px; height: 18px; border-radius: 50%; border: 2px dashed var(--local); }
+.cand em { font: 500 12px var(--f-mono); font-style: normal; color: var(--ink-3); }
+.barre { height: 6px; border-radius: 99px; background: rgb(255 255 255 / .08); overflow: hidden; }
+.barre i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+.grille { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
+.vign { position: relative; aspect-ratio: 1; border-radius: 12px; overflow: hidden; border: 0; padding: 0; cursor: pointer; background: #000; }
+.vign img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.vign small { position: absolute; left: 4px; bottom: 4px; font: 700 9px var(--f-body); padding: 3px 5px; border-radius: 6px; background: rgb(0 0 0 / .65); color: #fff; }
+.prop { display: grid; grid-template-columns: 64px 1fr; gap: 10px; padding: 8px; border-radius: 14px; background: rgb(255 255 255 / .04); }
+.prop img { width: 64px; height: 64px; object-fit: cover; border-radius: 10px; cursor: pointer; }
+.prop b { display: block; font-size: 14px; }
+.mono { font: 500 12px var(--f-mono); color: var(--ink-3); }
+.sep { height: 1px; background: var(--edge); }
+.leaflet-container { background: #0b1220; font: 13px var(--f-body); }
+.coords { position: fixed; right: 12px; bottom: 26px; z-index: 500; font: 500 12px var(--f-mono); padding: 7px 11px; border-radius: 999px; background: var(--panel); color: var(--ink-2); }
+.spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgb(255 255 255 / .25); border-top-color: var(--accent); animation: t .8s linear infinite; display: inline-block; }
+@keyframes t { to { transform: rotate(1turn); } }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<div id="carte" aria-label="Carte satellite"></div>
+<div class="coords" id="coords">—</div>
+
+<aside class="panneau" aria-label="Orbe">
+  <div class="tete">
+    <div class="marque"><i aria-hidden="true"></i><b>ORBE</b><span id="etat-modele">Chargement…</span></div>
+    <div class="onglets" role="tablist">
+      <button role="tab" aria-selected="true" data-vue="analyser">Analyser</button>
+      <button role="tab" aria-selected="false" data-vue="entrainer">Entraîner</button>
+      <button role="tab" aria-selected="false" data-vue="exemples">Exemples</button>
+    </div>
+  </div>
+  <div class="corps">
+    <!-- ANALYSER -->
+    <section class="vue" id="vue-analyser">
+      <div id="depot" class="depot">
+        <img id="apercu" alt="" hidden>
+        <div class="rang" style="justify-content:center">
+          <label class="btn prim" for="fichier">Choisir une photo</label>
+        </div>
+        <input id="fichier" type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden>
+        <p class="muted">Ou glissez-la ici, ou collez-la (Ctrl+V).</p>
+      </div>
+      <label class="case"><input type="checkbox" id="avec-claude" checked> Demander l'avis de Claude <span class="muted" id="claude-mode"></span></label>
+      <button class="btn prim" id="analyser" disabled>Analyser</button>
+      <div id="statut" aria-live="polite"></div>
+      <div id="resultat" class="vue"></div>
+    </section>
+
+    <!-- ENTRAINER -->
+    <section class="vue" id="vue-entrainer" hidden>
+      <div class="carte-res">
+        <p class="etiq">Votre modèle</p>
+        <div class="chiffres">
+          <div><span class="etiq">Exemples</span><b id="n-ex">0</b></div>
+          <div><span class="etiq">Version</span><b id="tete" style="font-size:15px">base</b></div>
+        </div>
+        <p class="muted" id="metriques">Pas encore entraîné.</p>
+        <button class="btn prim" id="entrainer">Entraîner sur mes photos</button>
+        <p class="muted">Une photo sur cinq est mise de côté pour juger le résultat. La nouvelle version n'est gardée que si elle se trompe moins sur ces photos.</p>
+      </div>
+      <div id="tache" hidden class="carte-res"><p class="etiq" id="tache-nom"></p><div class="barre"><i id="tache-barre" style="width:0"></i></div><p class="muted" id="tache-msg"></p></div>
+
+      <div class="carte-res">
+        <p class="etiq">1 · Importer des photos avec GPS</p>
+        <p class="muted">Les photos de téléphone gardent souvent leur position. Indiquez un dossier de ce PC : seules celles qui ont une position GPS sont ajoutées.</p>
+        <input type="text" id="dossier-import" placeholder="C:\Users\vous\Pictures\Boulogne">
+        <button class="btn" id="importer">Importer ce dossier</button>
+      </div>
+
+      <div class="carte-res">
+        <p class="etiq">2 · Claude propose, vous validez</p>
+        <p class="muted">Pour des photos sans GPS, Claude propose une position. Rien n'entre dans l'entraînement sans votre validation.</p>
+        <input type="text" id="dossier-claude" placeholder="Dossier de photos sans GPS">
+        <div class="rang"><input type="number" id="max-claude" value="10" min="1" max="200" style="width:90px"><span class="muted">photos au plus</span></div>
+        <button class="btn" id="proposer">Demander à Claude</button>
+        <div id="propositions" class="vue"></div>
+      </div>
+    </section>
+
+    <!-- EXEMPLES -->
+    <section class="vue" id="vue-exemples" hidden>
+      <p class="muted" id="exemples-info"></p>
+      <div id="exemples" class="grille"></div>
+      <div id="exemple-detail"></div>
+    </section>
+  </div>
+</aside>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  const km = (v) => v < 1 ? `${Math.round(v * 1000)} m` : `${v.toLocaleString("fr-FR", { maximumFractionDigits: v < 20 ? 1 : 0 })} km`;
+  const pct = (v) => `${Math.round(v * 100)} %`;
+  async function api(url, opts = {}) {
+    const r = await fetch(url, opts);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || `Erreur ${r.status}`);
+    return d;
+  }
+  const json = (body) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+  // ---------- carte satellite ----------
+  const carte = L.map("carte", { zoomControl: false, worldCopyJump: true }).setView([48.8397, 2.2399], 13);
+  L.control.zoom({ position: "topright" }).addTo(carte);
+  const satellite = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+    maxZoom: 19, attribution: "Imagerie © Esri, Maxar, Earthstar Geographics",
+  }).addTo(carte);
+  const noms = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}", { maxZoom: 19 }).addTo(carte);
+  const plan = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" });
+  L.control.layers({ "Satellite": satellite, "Plan": plan }, { "Noms et frontières": noms }, { position: "topright" }).addTo(carte);
+  carte.on("mousemove", (e) => { $("coords").textContent = `${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}`; });
+
+  const calque = L.layerGroup().addTo(carte);
+  let correction = null;     // {cible: "analyse"|"proposition", id, marqueur}
+  function vider() { calque.clearLayers(); }
+  function rond(lat, lon, rkm, couleur, pointille) {
+    L.circle([lat, lon], { radius: Math.max(30, rkm * 1000), color: couleur, weight: 2.5, dashArray: pointille ? "6 6" : null, fillOpacity: .12 }).addTo(calque);
+    L.circleMarker([lat, lon], { radius: 5, color: "#fff", weight: 2, fillColor: couleur, fillOpacity: 1 }).addTo(calque);
+  }
+  function cadrer(lat, lon, rkm) { carte.flyToBounds(L.latLng(lat, lon).toBounds(Math.max(300, rkm * 2600)), { duration: 1.2, maxZoom: 18 }); }
+
+  // ---------- onglets ----------
+  document.querySelectorAll("[data-vue]").forEach((b) => b.onclick = () => {
+    document.querySelectorAll("[data-vue]").forEach((x) => x.setAttribute("aria-selected", x === b));
+    document.querySelectorAll(".vue[id^=vue-]").forEach((v) => v.hidden = v.id !== `vue-${b.dataset.vue}`);
+    if (b.dataset.vue === "exemples") afficherExemples();
+    if (b.dataset.vue === "entrainer") afficherPropositions();
+  });
+
+  // ---------- état ----------
+  let etat = null;
+  async function rafraichir() {
+    try { etat = await api("/api/etat"); } catch { return; }
+    const echec = !etat.modele_charge && etat.tache.nom === "Chargement du modèle" && etat.tache.erreur;
+    $("etat-modele").textContent = etat.modele_charge ? `Modèle ${etat.tete} · ${etat.n_exemples} exemples`
+      : echec ? "Échec du chargement du modèle" : (etat.tache.en_cours ? etat.tache.message : "Modèle en chargement…");
+    if (echec && !$("statut").textContent) dire("bad", "Le modèle n'a pas pu se charger", `${etat.tache.erreur} — vérifiez la connexion internet au premier lancement, puis relancez Orbe.`);
+    $("n-ex").textContent = etat.n_exemples;
+    $("tete").textContent = etat.tete;
+    const cm = { api: "(clé API)", claude_code: "(via Claude Code)" }[etat.claude];
+    $("claude-mode").textContent = cm || "(non configuré)";
+    $("avec-claude").disabled = !etat.claude;
+    if (!etat.claude) $("avec-claude").checked = false;
+    const m = etat.metriques;
+    if (m) {
+      const d = m.dernier_essai_rejete;
+      $("metriques").textContent = `Dernier entraînement : erreur médiane ${km(m.mediane_km_avant)} → ${km(m.mediane_km_apres)} sur ${m.n_test} photos de test ` +
+        (m.garde ? "(nouvelle version gardée)." : "(pas d'amélioration, ancienne version conservée).") +
+        (d ? ` Dernier essai : ${km(d.mediane_km_avant)} → ${km(d.mediane_km_apres)}, rejeté.` : "");
+    }
+    $("analyser").disabled = !photo || !etat.modele_charge || occupe;
+    suivreTache(etat.tache);
+  }
+  let finTache = null;
+  function suivreTache(t) {
+    $("tache").hidden = !t.nom;
+    if (!t.nom) return;
+    $("tache-nom").textContent = t.nom;
+    $("tache-barre").style.width = `${Math.round(t.frac * 100)}%`;
+    if (t.en_cours) $("tache-msg").textContent = t.message;
+    else if (t.erreur) $("tache-msg").textContent = `Erreur : ${t.erreur}`;
+    else $("tache-msg").textContent = t.resultat ? resume(t.nom, t.resultat) : "Terminé.";
+    ["entrainer", "importer", "proposer"].forEach((id) => $(id).disabled = t.en_cours);
+    if (!t.en_cours && finTache !== t.nom + (t.erreur || "") + JSON.stringify(t.resultat)) {
+      finTache = t.nom + (t.erreur || "") + JSON.stringify(t.resultat);
+      afficherPropositions();
+    }
+  }
+  function resume(nom, r) {
+    if ("ajoutees" in r) return `${r.vues} photos vues : ${r.ajoutees} ajoutées, ${r.sans_gps} sans GPS, ${r.doublons} déjà présentes${r.erreurs ? `, ${r.erreurs} illisibles` : ""}.`;
+    if ("proposees" in r) return `${r.analysees} photos analysées : ${r.proposees} propositions à valider, ${r.ecartees} trop incertaines.`;
+    if ("garde" in r) return `Erreur médiane ${km(r.mediane_km_avant)} → ${km(r.mediane_km_apres)} sur ${r.n_test} photos de test. ` +
+      (r.garde ? "Nouvelle version gardée." : "Pas mieux : l'ancienne version reste en place.");
+    return "Terminé.";
+  }
+  setInterval(rafraichir, 1500);
+  api("/api/charger", { method: "POST" }).catch(() => {}).finally(rafraichir);
+
+  // ---------- analyse ----------
+  let photo = null, occupe = false, derniere = null;
+  function prendre(f) {
+    if (!f || !/^image\/(jpeg|png|webp|gif)$/.test(f.type)) { dire("bad", "Format non pris en charge", "JPEG, PNG, WebP ou GIF. Convertissez les HEIC d'iPhone en JPEG."); return; }
+    photo = f;
+    $("apercu").src = URL.createObjectURL(f); $("apercu").hidden = false;
+    dire(); rafraichir();
+  }
+  $("fichier").onchange = (e) => prendre(e.target.files[0]);
+  const depot = $("depot");
+  depot.ondragover = (e) => { e.preventDefault(); depot.classList.add("survol"); };
+  depot.ondragleave = () => depot.classList.remove("survol");
+  depot.ondrop = (e) => { e.preventDefault(); depot.classList.remove("survol"); prendre(e.dataTransfer.files[0]); };
+  document.addEventListener("paste", (e) => { const f = e.clipboardData?.files?.[0]; if (f) prendre(f); });
+  function dire(type, titre, texte) {
+    $("statut").innerHTML = type ? `<div class="avis ${type}"><strong>${esc(titre)}</strong>${esc(texte || "")}</div>` : "";
+  }
+
+  $("analyser").onclick = async () => {
+    occupe = true; rafraichir();
+    $("resultat").innerHTML = "";
+    const avecClaude = $("avec-claude").checked;
+    $("statut").innerHTML = `<div class="avis info"><span class="spin"></span> Le modèle local analyse la photo${avecClaude ? ", puis Claude donne son avis (jusqu'à une minute)" : ""}…</div>`;
+    try {
+      const fd = new FormData();
+      fd.append("photo", photo, photo.name || "photo.jpg");
+      fd.append("avec_claude", avecClaude ? "true" : "false");
+      derniere = await api("/api/analyser", { method: "POST", body: fd });
+      dire();
+      montrer(derniere);
+    } catch (e) { dire("bad", "L'analyse a échoué", e.message); }
+    finally { occupe = false; rafraichir(); }
+  };
+
+  async function nomDuLieu(lat, lon) {
+    try {
+      const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=16&accept-language=fr&lat=${lat}&lon=${lon}`);
+      const d = await r.json();
+      return d.display_name || "";
+    } catch { return ""; }
+  }
+
+  function montrer(a) {
+    vider();
+    const f = a.final, c = a.claude, loc = a.local;
+    loc.candidats.forEach((k, i) => rond(k.lat, k.lon, k.rayon_km, "#ffc93c", true));
+    loc.voisins.filter((v) => v.similarite > 0.8).forEach((v) => L.circleMarker([v.lat, v.lon], { radius: 4, color: "#3ddc84", weight: 2, fillOpacity: .8 })
+      .bindTooltip(`Votre photo · ressemblance ${pct(v.similarite)}`).addTo(calque));
+    if (a.gps_photo) L.circleMarker(a.gps_photo, { radius: 7, color: "#fff", weight: 2, fillColor: "#ff4fa3", fillOpacity: 1 }).bindTooltip("Position GPS enregistrée dans la photo").addTo(calque);
+    if (!f) {
+      $("resultat").innerHTML = `<div class="avis warn"><strong>Aucun lieu trouvé</strong>${esc(c?.resume || "La photo ne donne pas assez d'indices.")}</div>`;
+      return;
+    }
+    rond(f.lat, f.lon, f.rayon_km, "#3fb4ff", false);
+    cadrer(f.lat, f.lon, f.rayon_km);
+    const titre = c?.lieu || "Position estimée";
+    const sous = c ? [c.ville, c.pays].filter(Boolean).join(", ") : "";
+    const accord = f.par === "claude" ? (f.accord ? `<span class="badge ok">Claude confirme le modèle</span>` : `<span class="badge warn">Claude corrige le modèle</span>`)
+      : c && c.lat == null ? `<span class="badge warn">Claude ne voit pas de lieu identifiable</span>`
+      : c ? `<span class="badge warn">Claude n'est pas sûr</span>` : `<span class="badge local">Modèle local seul</span>`;
+    $("resultat").innerHTML = `
+      <div class="carte-res">
+        <div class="rang">${accord}</div>
+        <h2>${esc(titre)}</h2>
+        <p class="muted" id="nom-lieu">${esc(sous)}</p>
+        <div class="chiffres">
+          <div><span class="etiq">Confiance</span><b>${pct(f.confiance)}</b></div>
+          <div><span class="etiq">Rayon</span><b>±${km(f.rayon_km)}</b></div>
+        </div>
+        ${a.gps_photo ? `<p class="muted">La photo contenait sa position GPS : elle est à ${km(dist(a.gps_photo[0], a.gps_photo[1], f.lat, f.lon))} de l'estimation (point rose).</p>` : ""}
+        ${c?.resume ? `<p style="margin:0">${esc(c.resume)}</p>` : ""}
+        ${c?.indices?.length ? `<div><p class="etiq">Indices vus par Claude</p><ul class="liste">${c.indices.map((x) => `<li><span>✦</span><span>${esc(x)}</span></li>`).join("")}</ul></div>` : ""}
+        ${c?.textes_lus?.length ? `<p class="mono">Textes lus : ${c.textes_lus.map(esc).join(" · ")}</p>` : ""}
+        <div class="rang">
+          <a class="btn petit" target="_blank" rel="noreferrer" href="https://www.google.com/maps/search/?api=1&query=${f.lat},${f.lon}">Google Maps ↗</a>
+          <button class="btn petit" id="copier">Copier les coordonnées</button>
+        </div>
+      </div>
+      ${a.erreur_claude ? `<div class="avis warn"><strong>Claude n'a pas répondu</strong>${esc(a.erreur_claude)}</div>` : ""}
+      <div class="carte-res">
+        <p class="etiq">Apprendre de cette photo</p>
+        <p class="muted">Si la position est juste, ajoutez la photo à vos exemples. Sinon, cliquez sur la carte au bon endroit puis enregistrez.</p>
+        <div class="rang">
+          <button class="btn ok" id="juste">C'est juste</button>
+          <button class="btn" id="corriger">Corriger sur la carte</button>
+        </div>
+        <div id="apprendre"></div>
+      </div>
+      <div class="carte-res">
+        <p class="etiq">Ce que propose le modèle local (${esc(loc.tete)}, ${loc.n_exemples} exemples)</p>
+        ${loc.candidats.map((k, i) => `<button class="cand" data-i="${i}"><i></i><span>${k.lat.toFixed(4)}, ${k.lon.toFixed(4)} · ±${km(k.rayon_km)}</span><em>${pct(k.proba)}</em></button>`).join("")}
+        ${loc.poids_exemples > 0 ? `<p class="muted">La photo ressemble à vos propres exemples (points verts) : ils pèsent ${pct(loc.poids_exemples)} dans l'estimation.</p>` : ""}
+      </div>`;
+    if (!c) nomDuLieu(f.lat, f.lon).then((n) => { const el = $("nom-lieu"); if (el && n) el.textContent = n; });
+    $("copier").onclick = (e) => navigator.clipboard.writeText(`${f.lat.toFixed(6)}, ${f.lon.toFixed(6)}`).then(() => e.target.textContent = "Copié");
+    document.querySelectorAll(".cand").forEach((b) => b.onclick = () => { const k = loc.candidats[b.dataset.i]; cadrer(k.lat, k.lon, k.rayon_km); });
+    $("juste").onclick = () => enregistrer(a.id, f.lat, f.lon);
+    $("corriger").onclick = () => commencerCorrection("analyse", a.id, f.lat, f.lon, "apprendre");
+  }
+
+  function dist(a, b, c, d) {
+    const r = Math.PI / 180, x = Math.sin((c - a) * r / 2) ** 2 + Math.cos(a * r) * Math.cos(c * r) * Math.sin((d - b) * r / 2) ** 2;
+    return 12742 * Math.asin(Math.min(1, Math.sqrt(x)));
+  }
+
+  function commencerCorrection(cible, id, lat, lon, boite) {
+    if (correction?.marqueur) correction.marqueur.remove();
+    const marqueur = L.marker([lat, lon], { draggable: true }).addTo(carte);
+    correction = { cible, id, marqueur };
+    const maj = () => {
+      const p = marqueur.getLatLng();
+      $(boite).innerHTML = `<p class="mono">${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}</p><div class="rang"><button class="btn prim" id="enreg-correction">Enregistrer cette position</button><button class="btn petit" id="annuler-correction">Annuler</button></div>`;
+      $("enreg-correction").onclick = () => {
+        const q = marqueur.getLatLng();
+        (cible === "analyse" ? enregistrer(id, q.lat, q.lng) : validerProposition(id, q.lat, q.lng)).finally(finCorrection);
+      };
+      $("annuler-correction").onclick = () => { finCorrection(); $(boite).innerHTML = ""; };
+    };
+    marqueur.on("dragend", maj);
+    maj();
+    $(boite).insertAdjacentHTML("afterbegin", `<p class="muted">Déplacez le repère, ou cliquez sur la carte.</p>`);
+  }
+  function finCorrection() { if (correction?.marqueur) correction.marqueur.remove(); correction = null; }
+  carte.on("click", (e) => { if (correction) { correction.marqueur.setLatLng(e.latlng); correction.marqueur.fire("dragend"); } });
+
+  async function enregistrer(id, lat, lon) {
+    try {
+      await api(`/api/analyses/${id}/valider`, json({ lat, lon }));
+      $("apprendre").innerHTML = `<div class="avis info"><strong>Photo ajoutée à vos exemples</strong>Elle compte dès maintenant. Entraînez le modèle quand vous en avez ajouté plusieurs.</div>`;
+      ["juste", "corriger"].forEach((x) => $(x) && ($(x).disabled = true));
+      rafraichir();
+    } catch (e) { $("apprendre").innerHTML = `<div class="avis bad"><strong>Pas enregistré</strong>${esc(e.message)}</div>`; }
+  }
+
+  // ---------- entraînement ----------
+  $("entrainer").onclick = () => api("/api/entrainer", { method: "POST" }).then(rafraichir).catch((e) => alert(e.message));
+  $("importer").onclick = () => api("/api/importer", json({ dossier: $("dossier-import").value })).then(rafraichir).catch((e) => alert(e.message));
+  $("proposer").onclick = () => api("/api/claude-proposer", json({ dossier: $("dossier-claude").value, maximum: Number($("max-claude").value) || 10 }))
+    .then(rafraichir).catch((e) => alert(e.message));
+
+  async function afficherPropositions() {
+    let p = [];
+    try { p = await api("/api/propositions"); } catch {}
+    const box = $("propositions");
+    box.innerHTML = p.length ? `<p class="etiq">${p.length} à valider</p>` + p.map((x) => `
+      <div class="prop" data-id="${x.id}">
+        <img src="/attente/${esc(x.fichier)}" alt="" data-voir="${x.id}">
+        <div>
+          <b>${esc(x.analyse.lieu || "Lieu proposé")}</b>
+          <span class="muted">${esc([x.analyse.ville, x.analyse.pays].filter(Boolean).join(", "))} · confiance ${pct(x.analyse.confiance)} · ±${km(x.analyse.rayon_km)}</span>
+          <div class="rang" style="margin-top:6px">
+            <button class="btn ok petit" data-ok="${x.id}">Valider</button>
+            <button class="btn petit" data-corr="${x.id}">Corriger</button>
+            <button class="btn petit" data-non="${x.id}">Rejeter</button>
+          </div>
+          <div id="corr-${x.id}"></div>
+        </div>
+      </div>`).join("") : "";
+    const trouver = (id) => p.find((x) => x.id === id);
+    box.querySelectorAll("[data-voir]").forEach((b) => b.onclick = () => { const a = trouver(b.dataset.voir).analyse; vider(); rond(a.lat, a.lon, a.rayon_km, "#3fb4ff"); cadrer(a.lat, a.lon, a.rayon_km); });
+    box.querySelectorAll("[data-ok]").forEach((b) => b.onclick = () => { const a = trouver(b.dataset.ok).analyse; validerProposition(b.dataset.ok, a.lat, a.lon); });
+    box.querySelectorAll("[data-corr]").forEach((b) => b.onclick = () => { const a = trouver(b.dataset.corr).analyse; cadrer(a.lat, a.lon, a.rayon_km); commencerCorrection("proposition", b.dataset.corr, a.lat, a.lon, `corr-${b.dataset.corr}`); });
+    box.querySelectorAll("[data-non]").forEach((b) => b.onclick = () => api(`/api/propositions/${b.dataset.non}`, { method: "DELETE" }).then(afficherPropositions));
+  }
+  async function validerProposition(id, lat, lon) {
+    try { await api(`/api/propositions/${id}/valider`, json({ lat, lon })); } catch (e) { alert(e.message); }
+    afficherPropositions(); rafraichir();
+  }
+
+  // ---------- exemples ----------
+  const SOURCES = { exif: "GPS", correction: "Corrigée", claude_valide: "Claude ✓" };
+  async function afficherExemples() {
+    const ex = await api("/api/exemples").catch(() => []);
+    $("exemples-info").textContent = ex.length ? `${ex.length} photos dont la position est sûre. Cliquez pour les voir sur la carte.` : "Aucun exemple pour l'instant. Importez un dossier ou validez des analyses.";
+    $("exemples").innerHTML = ex.slice().reverse().map((e) => `<button class="vign" data-e="${e.id}"><img src="/photos/${esc(e.fichier)}" alt="" loading="lazy"><small>${SOURCES[e.source] || ""}</small></button>`).join("");
+    vider();
+    ex.forEach((e) => L.circleMarker([e.lat, e.lon], { radius: 4, color: "#3ddc84", weight: 2, fillOpacity: .8 }).addTo(calque));
+    if (ex.length) carte.flyToBounds(L.latLngBounds(ex.map((e) => [e.lat, e.lon])).pad(.3), { maxZoom: 15 });
+    document.querySelectorAll("[data-e]").forEach((b) => b.onclick = () => {
+      const e = ex.find((x) => x.id === b.dataset.e);
+      carte.flyTo([e.lat, e.lon], 17);
+      $("exemple-detail").innerHTML = `<div class="carte-res"><p class="mono">${e.lat.toFixed(6)}, ${e.lon.toFixed(6)} · ${esc(SOURCES[e.source])}${e.note ? " · " + esc(e.note) : ""}</p><button class="btn petit" id="suppr">Retirer des exemples</button></div>`;
+      $("suppr").onclick = () => api(`/api/exemples/${e.id}`, { method: "DELETE" }).then(() => { $("exemple-detail").innerHTML = ""; afficherExemples(); rafraichir(); });
+    });
+  }
+})();
+</script>
+</body>
+</html>
