@@ -256,7 +256,9 @@ label.case input { width: 18px; height: 18px; accent-color: var(--accent); }
   }
   function resume(nom, r) {
     if ("zones" in r) return `${r.ajoutees} images de rue ajoutées (${Object.entries(r.zones).map(([k, v]) => `${k} : ${v}`).join(", ")})` +
-      `${r.deja_la ? `, ${r.deja_la} déjà présentes` : ""}${r.erreurs ? `, ${r.erreurs} échecs de téléchargement` : ""}. Lancez maintenant l'entraînement.`;
+      `${r.erreurs ? `, ${r.erreurs} échecs de téléchargement` : ""}.` +
+      (r.carres_vides ? ` ${r.carres_vides} carrés de 150 m n'ont aucune image sur Panoramax : ces rues ne pourront pas être apprises par la banque.` : "") +
+      " Lancez maintenant l'entraînement.";
     if ("ajoutees" in r) return `${r.vues} photos vues : ${r.ajoutees} ajoutées, ${r.sans_gps} sans GPS, ${r.doublons} déjà présentes${r.erreurs ? `, ${r.erreurs} illisibles` : ""}.`;
     if ("proposees" in r) return `${r.analysees} photos analysées : ${r.proposees} propositions à valider, ${r.ecartees} trop incertaines.`;
     if ("garde" in r) return `Erreur médiane ${km(r.mediane_km_avant)} → ${km(r.mediane_km_apres)} sur ${r.n_test} photos de test. ` +

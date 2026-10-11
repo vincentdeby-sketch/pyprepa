@@ -6,7 +6,9 @@ Ouverte selon l'instance) : on peut les télécharger et s'en servir pour entra�
 from __future__ import annotations
 
 import json
+import math
 import os
+import random
 import tempfile
 import time
 import urllib.parse
@@ -69,57 +71,80 @@ def vue_avant(chemin: Path):
             im.crop((g, 0, g + lw, h)).convert("RGB").save(chemin, "JPEG", quality=90)
 
 
-def importer(moteur, zones, par_zone=300, ecart_min_m=25, suivi=lambda m, f: None):
-    """Télécharge des images réparties sur chaque zone et les ajoute aux exemples."""
+def _cases(bbox, cote_m):
+    o, s, e, n = bbox
+    lat_m = 111_195.0
+    lon_m = lat_m * math.cos(math.radians((s + n) / 2))
+    nx = max(1, round((e - o) * lon_m / cote_m))
+    ny = max(1, round((n - s) * lat_m / cote_m))
+    return [(o + (e - o) * i / nx, s + (n - s) * j / ny, o + (e - o) * (i + 1) / nx, s + (n - s) * (j + 1) / ny)
+            for i in range(nx) for j in range(ny)]
+
+
+def importer(moteur, zones, par_zone=300, ecart_min_m=25, cote_m=150, suivi=lambda m, f: None):
+    """Télécharge des images réparties sur toute la zone et les ajoute aux exemples.
+
+    La zone est découpée en carrés d'environ 150 m, visités dans le désordre. Au premier passage
+    on prend une image par carré (la plus éloignée de celles déjà gardées), puis une deuxième
+    au passage suivant si le compte n'est pas atteint. Ainsi toute la ville est couverte avant
+    qu'une rue reçoive une deuxième image.
+    """
     deja = base.empreintes()
     gardes = [(l["lat"], l["lon"]) for l in base.exemples() if l["source"] == "panoramax"]
-    bilan = {"ajoutees": 0, "deja_la": 0, "trop_proches": 0, "erreurs": 0, "zones": {}}
-    grille = 6  # 6 x 6 cases par zone : les images couvrent toute la zone, pas une seule rue
+    bilan = {"ajoutees": 0, "deja_la": 0, "trop_proches": 0, "erreurs": 0, "carres_vides": 0, "zones": {}}
+    hasard = random.Random(0)
     for zi, cle in enumerate(zones):
         if cle not in ZONES:
             continue
-        nom, (o, s, e, n) = ZONES[cle]
-        ajout_zone = 0
-        par_case = max(2, -(-par_zone // (grille * grille)))
-        cases = [(o + (e - o) * i / grille, s + (n - s) * j / grille, o + (e - o) * (i + 1) / grille, s + (n - s) * (j + 1) / grille)
-                 for i in range(grille) for j in range(grille)]
-        for ci, case in enumerate(cases):
+        nom, bbox = ZONES[cle]
+        cases = _cases(bbox, cote_m)
+        hasard.shuffle(cases)
+        ajout_zone, cache = 0, {}
+        for passage in range(3):
             if ajout_zone >= par_zone:
                 break
-            suivi(f"{nom} · secteur {ci + 1}/{len(cases)} · {ajout_zone} images", (zi + ci / len(cases)) / len(zones))
-            try:
-                trouves = chercher(case, par_case * 4)
-            except Exception:
-                bilan["erreurs"] += 1
-                continue
-            pris = 0
-            for ident, lat, lon, url, auteur, licence in trouves:
-                if pris >= par_case or ajout_zone >= par_zone:
+            for ci, case in enumerate(cases):
+                if ajout_zone >= par_zone:
                     break
-                empreinte = f"panoramax:{ident}"
-                if empreinte in deja:
-                    bilan["deja_la"] += 1
+                if ci % 5 == 0:
+                    suivi(f"{nom} · passage {passage + 1} · carré {ci + 1}/{len(cases)} · {ajout_zone} images",
+                          (zi + min(1, (passage * len(cases) + ci) / max(1, len(cases)))) / len(zones))
+                if case not in cache:
+                    try:
+                        cache[case] = chercher(case, 30)
+                        time.sleep(0.1)  # politesse envers le serveur public
+                    except Exception:
+                        bilan["erreurs"] += 1
+                        cache[case] = []
+                    if not cache[case]:
+                        bilan["carres_vides"] += 1
+                candidats = []
+                for t in cache[case]:
+                    if f"panoramax:{t[0]}" in deja:
+                        continue
+                    proches = [distance_km(t[1], t[2], a, b) for a, b in gardes[-2000:]]
+                    d = min(proches) * 1000 if proches else 1e9
+                    if d >= ecart_min_m:
+                        candidats.append((d, t))
+                if not candidats:
                     continue
-                # On évite 50 images consécutives de la même rue
-                if any(distance_km(lat, lon, a, b) * 1000 < ecart_min_m for a, b in gardes[-400:]):
-                    bilan["trop_proches"] += 1
-                    continue
+                _, (ident, lat, lon, url, auteur, licence) = max(candidats)  # la plus éloignée des images déjà gardées
                 try:
                     with tempfile.TemporaryDirectory() as d:
                         f = Path(d) / "vue.jpg"
                         f.write_bytes(_get(url, timeout=60))
                         vue_avant(f)
                         base.ajouter(f, lat, lon, "panoramax", moteur.caracteristiques(f),
-                                     note=f"Panoramax {ident} · {auteur} · {licence}".strip(" ·"), empreinte=empreinte)
+                                     note=f"Panoramax {ident} · {auteur} · {licence}".strip(" ·"), empreinte=f"panoramax:{ident}")
                 except Exception:
                     bilan["erreurs"] += 1
+                    deja.add(f"panoramax:{ident}")  # on ne réessaie pas la même image
                     continue
-                deja.add(empreinte)
+                deja.add(f"panoramax:{ident}")
                 gardes.append((lat, lon))
-                pris += 1
                 ajout_zone += 1
                 bilan["ajoutees"] += 1
-            time.sleep(0.2)  # politesse envers le serveur public
         bilan["zones"][nom] = ajout_zone
+        bilan.setdefault("carres", {})[nom] = len(cases)
     suivi("Terminé", 1.0)
     return bilan

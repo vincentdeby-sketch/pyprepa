@@ -166,29 +166,30 @@ def test_normaliser_claude():
 
 
 def test_banque_panoramax(tmp_path, monkeypatch):
-    """Panoramax simulé : réponse au format de l'API (features, geometry, assets.sd.href)."""
+    """Panoramax simulé comme le vrai : chaque recherche renvoie des photos consécutives
+    d'une même séquence (une rue), au format de l'API (features, geometry, assets.sd.href)."""
     import json as _json
+    from urllib.parse import unquote
     from fastapi.testclient import TestClient
     from orbe import panoramax
+    from orbe.geo import distance_km
 
-    rng = np.random.default_rng(1)
     pano = io.BytesIO(); Image.new("RGB", (400, 200), (50, 90, 130)).save(pano, "JPEG")
-    compteur = {"n": 0}
 
     def faux_get(url, timeout=30):
         if "/search?" in url:
             q = dict(x.split("=") for x in url.split("?")[1].split("&"))
-            o, s_, e, n = (float(v) for v in urllib_unquote(q["bbox"]).split(","))
-            feats = []
-            for _ in range(int(q["limit"])):
-                compteur["n"] += 1
-                feats.append({"id": f"img{compteur['n']}", "geometry": {"type": "Point", "coordinates": [o + rng.random() * (e - o), s_ + rng.random() * (n - s_)]},
-                              "properties": {"license": "CC-BY-SA-4.0", "providers": [{"name": "Contributeur"}]},
-                              "assets": {"sd": {"href": f"https://exemple/{compteur['n']}/sd.jpg"}, "thumb": {"href": "x"}}})
+            o, s_, e, n = (float(v) for v in unquote(q["bbox"]).split(","))
+            r = np.random.default_rng(abs(hash((round(o, 5), round(s_, 5)))) % 2**32)
+            if r.random() < 0.3:          # 30 % des carrés sans aucune image
+                return b'{"type":"FeatureCollection","features":[]}'
+            lat0 = s_ + r.random() * (n - s_)  # une rue horizontale qui traverse le carré
+            feats = [{"id": f"{o:.5f}-{s_:.5f}-{k}", "geometry": {"type": "Point", "coordinates": [o + (e - o) * (k + 0.5) / int(q["limit"]), lat0]},
+                      "properties": {"license": "CC-BY-SA-4.0", "providers": [{"name": "Contributeur"}]},
+                      "assets": {"sd": {"href": "https://exemple/sd.jpg"}}} for k in range(int(q["limit"]))]
             return _json.dumps({"type": "FeatureCollection", "features": feats}).encode()
         return pano.getvalue()
 
-    from urllib.parse import unquote as urllib_unquote
     monkeypatch.setattr(panoramax, "_get", faux_get)
     monkeypatch.setattr(panoramax.time, "sleep", lambda s: None)
     serveur.moteur = Moteur(FauxBackend)
@@ -199,27 +200,31 @@ def test_banque_panoramax(tmp_path, monkeypatch):
     avant = c.get("/api/etat").json()["n_exemples"]
     assert {z["cle"] for z in c.get("/api/banque/zones").json()} >= {"boulogne", "paris16"}
     assert c.post("/api/banque", json={"zones": ["inconnue"]}).status_code == 400
-    assert c.post("/api/banque", json={"zones": ["boulogne"], "par_zone": 40}).status_code == 200
+    assert c.post("/api/banque", json={"zones": ["boulogne"], "par_zone": 120}).status_code == 200
     while c.get("/api/tache").json()["en_cours"]:
         time.sleep(.05)
     t = c.get("/api/tache").json()
     assert t["erreur"] is None, t
     r = t["resultat"]
-    assert r["zones"]["Boulogne-Billancourt"] == 40 == r["ajoutees"], r
+    assert r["zones"]["Boulogne-Billancourt"] == 120 == r["ajoutees"], r
     ex = [e for e in c.get("/api/exemples").json() if e["source"] == "panoramax"]
-    assert len(ex) == 40 and c.get("/api/etat").json()["n_exemples"] == avant + 40
+    assert len(ex) == 120 and c.get("/api/etat").json()["n_exemples"] == avant + 120
     o, s_, e, n = panoramax.ZONES["boulogne"][1]
     assert all(s_ <= x["lat"] <= n and o <= x["lon"] <= e for x in ex)
+    # Couverture : sur une grille de 6 x 6 (~500 m), presque tous les carrés ont au moins une image
+    occupes = {(int((x["lon"] - o) / (e - o) * 6), int((x["lat"] - s_) / (n - s_) * 6)) for x in ex}
+    assert len(occupes) >= 32, f"images regroupées : {len(occupes)}/36 carrés couverts"
     # la vue 360° (2:1) a été recadrée en vue avant 4:3
     from orbe.config import PHOTOS
     with Image.open(PHOTOS / ex[0]["fichier"]) as im:
         assert abs(im.size[0] / im.size[1] - 4 / 3) < 0.02
-    # écart minimal de 25 m entre images
-    from orbe.geo import distance_km
     pts = [(x["lat"], x["lon"]) for x in ex]
     assert min(distance_km(*a, *b) for i, a in enumerate(pts) for b in pts[i + 1:]) * 1000 >= 25
-    # relancer n'ajoute pas les mêmes images
+    assert r["carres_vides"] > 0
+    # relancer ajoute d'autres images, jamais les mêmes
     c.post("/api/banque", json={"zones": ["boulogne"], "par_zone": 10})
     while c.get("/api/tache").json()["en_cours"]:
         time.sleep(.05)
     assert c.get("/api/tache").json()["resultat"]["ajoutees"] == 10
+    notes = [e["note"] for e in c.get("/api/exemples").json() if e["source"] == "panoramax"]
+    assert len(notes) == len(set(notes)) == 130
