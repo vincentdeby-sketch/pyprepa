@@ -230,6 +230,28 @@ def claude_proposer(req: Dossier):
     return lancer("Propositions de Claude", travail)
 
 
+class Banque(BaseModel):
+    zones: list[str]
+    par_zone: int = 300
+
+
+@app.get("/api/banque/zones")
+def zones_banque():
+    from .panoramax import ZONES
+    return [{"cle": k, "nom": v[0], "bbox": v[1]} for k, v in ZONES.items()]
+
+
+@app.post("/api/banque")
+def banque(req: Banque):
+    """Banque clé en main : images de rue Panoramax avec position GPS, pour les zones choisies."""
+    from . import panoramax
+    zones = [z for z in req.zones if z in panoramax.ZONES]
+    if not zones:
+        raise HTTPException(400, "Choisissez au moins une zone.")
+    n = max(10, min(2000, req.par_zone))
+    return lancer("Banque Panoramax", lambda suivi: panoramax.importer(moteur, zones, n, suivi=suivi))
+
+
 @app.get("/api/propositions")
 def liste_propositions():
     return base.propositions()
@@ -287,6 +309,7 @@ def charger():
         moteur.b
         suivi("Préparation des 100 000 positions de référence…", 0.6)
         moteur.charger()
+        suivi("Modèle prêt", 1.0)
         return None
 
     return lancer("Chargement du modèle", travail)

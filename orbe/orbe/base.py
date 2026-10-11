@@ -17,7 +17,8 @@ import numpy as np
 
 from .config import ATTENTE, BASE, PHOTOS
 
-SOURCES = {"exif": "GPS de la photo", "correction": "Corrigée sur la carte", "claude_valide": "Proposée par Claude, validée"}
+SOURCES = {"exif": "GPS de la photo", "correction": "Corrigée sur la carte", "claude_valide": "Proposée par Claude, validée",
+           "panoramax": "Image de rue Panoramax"}
 
 _verrou = threading.RLock()
 

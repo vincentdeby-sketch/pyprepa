@@ -137,6 +137,15 @@ label.case input { width: 18px; height: 18px; accent-color: var(--accent); }
       <div id="tache" hidden class="carte-res"><p class="etiq" id="tache-nom"></p><div class="barre"><i id="tache-barre" style="width:0"></i></div><p class="muted" id="tache-msg"></p></div>
 
       <div class="carte-res">
+        <p class="etiq">Banque clé en main · images de rue</p>
+        <p class="muted">Orbe télécharge des vues de rue Panoramax (le « Street View » public de l'IGN et d'OpenStreetMap France), avec leur position GPS, réparties sur chaque zone choisie.</p>
+        <div id="zones" class="grille" style="grid-template-columns:1fr 1fr"></div>
+        <div class="rang"><input type="number" id="par-zone" value="300" min="10" max="2000" step="50" style="width:100px"><span class="muted">images par zone</span></div>
+        <p class="muted" id="estimation-banque"></p>
+        <button class="btn prim" id="banque">Télécharger la banque</button>
+      </div>
+
+      <div class="carte-res">
         <p class="etiq">1 · Importer des photos avec GPS</p>
         <p class="muted">Les photos de téléphone gardent souvent leur position. Indiquez un dossier de ce PC : seules celles qui ont une position GPS sont ajoutées.</p>
         <input type="text" id="dossier-import" placeholder="C:\Users\vous\Pictures\Boulogne">
@@ -239,13 +248,15 @@ label.case input { width: 18px; height: 18px; accent-color: var(--accent); }
     if (t.en_cours) $("tache-msg").textContent = t.message;
     else if (t.erreur) $("tache-msg").textContent = `Erreur : ${t.erreur}`;
     else $("tache-msg").textContent = t.resultat ? resume(t.nom, t.resultat) : "Terminé.";
-    ["entrainer", "importer", "proposer"].forEach((id) => $(id).disabled = t.en_cours);
+    ["entrainer", "importer", "proposer", "banque"].forEach((id) => $(id).disabled = t.en_cours);
     if (!t.en_cours && finTache !== t.nom + (t.erreur || "") + JSON.stringify(t.resultat)) {
       finTache = t.nom + (t.erreur || "") + JSON.stringify(t.resultat);
       afficherPropositions();
     }
   }
   function resume(nom, r) {
+    if ("zones" in r) return `${r.ajoutees} images de rue ajoutées (${Object.entries(r.zones).map(([k, v]) => `${k} : ${v}`).join(", ")})` +
+      `${r.deja_la ? `, ${r.deja_la} déjà présentes` : ""}${r.erreurs ? `, ${r.erreurs} échecs de téléchargement` : ""}. Lancez maintenant l'entraînement.`;
     if ("ajoutees" in r) return `${r.vues} photos vues : ${r.ajoutees} ajoutées, ${r.sans_gps} sans GPS, ${r.doublons} déjà présentes${r.erreurs ? `, ${r.erreurs} illisibles` : ""}.`;
     if ("proposees" in r) return `${r.analysees} photos analysées : ${r.proposees} propositions à valider, ${r.ecartees} trop incertaines.`;
     if ("garde" in r) return `Erreur médiane ${km(r.mediane_km_avant)} → ${km(r.mediane_km_apres)} sur ${r.n_test} photos de test. ` +
@@ -395,6 +406,21 @@ label.case input { width: 18px; height: 18px; accent-color: var(--accent); }
   $("proposer").onclick = () => api("/api/claude-proposer", json({ dossier: $("dossier-claude").value, maximum: Number($("max-claude").value) || 10 }))
     .then(rafraichir).catch((e) => alert(e.message));
 
+  // ---------- banque Panoramax ----------
+  (async () => {
+    const zones = await api("/api/banque/zones").catch(() => []);
+    $("zones").innerHTML = zones.map((z, i) => `<label class="case"><input type="checkbox" value="${z.cle}" ${i === 0 ? "checked" : ""}> ${esc(z.nom)}</label>`).join("");
+    const estimer = () => {
+      const n = document.querySelectorAll("#zones input:checked").length * (Number($("par-zone").value) || 0);
+      $("estimation-banque").textContent = n ? `${n} images · environ ${Math.max(1, Math.round(n * 2 / 60))} min sur un PC sans carte graphique · ${Math.round(n * 0.25)} Mo` : "";
+    };
+    $("zones").onchange = estimer; $("par-zone").oninput = estimer; estimer();
+    $("banque").onclick = () => {
+      const choix = [...document.querySelectorAll("#zones input:checked")].map((x) => x.value);
+      api("/api/banque", json({ zones: choix, par_zone: Number($("par-zone").value) || 300 })).then(rafraichir).catch((e) => alert(e.message));
+    };
+  })();
+
   async function afficherPropositions() {
     let p = [];
     try { p = await api("/api/propositions"); } catch {}
@@ -425,7 +451,7 @@ label.case input { width: 18px; height: 18px; accent-color: var(--accent); }
   }
 
   // ---------- exemples ----------
-  const SOURCES = { exif: "GPS", correction: "Corrigée", claude_valide: "Claude ✓" };
+  const SOURCES = { exif: "GPS", correction: "Corrigée", claude_valide: "Claude ✓", panoramax: "Rue" };
   async function afficherExemples() {
     const ex = await api("/api/exemples").catch(() => []);
     $("exemples-info").textContent = ex.length ? `${ex.length} photos dont la position est sûre. Cliquez pour les voir sur la carte.` : "Aucun exemple pour l'instant. Importez un dossier ou validez des analyses.";
