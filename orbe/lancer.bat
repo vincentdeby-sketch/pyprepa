@@ -16,5 +16,7 @@ if not exist .venv\installe.ok (
   .venv\Scripts\python -m pip install -r requirements.txt || (echo L installation a echoue, relancez ce fichier. & pause & exit /b 1)
   echo ok> .venv\installe.ok
 )
+rem Le telechargeur Xet de HuggingFace plante sur les PC qui ont peu de memoire : on le retire.
+.venv\Scripts\python -m pip uninstall -y -q hf_xet >nul 2>&1
 .venv\Scripts\python lancer.py
 pause
